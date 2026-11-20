@@ -57,22 +57,28 @@ def main():
             inbound[v] += 1
 
     start = crawl["start"]
+    # сирота: страница есть в sitemap, работает, но ни одна обойдённая страница на неё не ссылается
     orphans = [u for u in ok if inbound[u] == 0 and u != start]
-    dead_ends = [u for u in ok if not edges.get(u)]
-    deep = [{"url": u, "depth": pages[u]["depth"]} for u in ok if pages[u]["depth"] > 3]
+    linked_ok = [u for u in ok if pages[u].get("found_via") != "sitemap"]
+    dead_ends = [u for u in linked_ok if not edges.get(u) and len(linked_ok) > 1]
+    deep = [{"url": u, "depth": pages[u]["depth"]} for u in linked_ok if pages[u]["depth"] > 3]
     pr = pagerank(ok, edges) if ok else {}
     ranked = sorted(pr.items(), key=lambda x: -x[1])
     depth_hist = defaultdict(int)
-    for u in ok:
+    for u in linked_ok:
         depth_hist[pages[u]["depth"]] += 1
 
+    exhausted = crawl.get("links_exhausted", True)
     data = {
         "pages": len(ok),
+        "orphans_reliable": exhausted,
         "depth_distribution": dict(sorted(depth_hist.items())),
         "deep_pages": deep[:100],
         "orphans": orphans[:100],
-        "orphans_note": "Сирота = страница, на которую не ведёт ни одна ссылка из обойдённых. "
-                        "Такие страницы обход находит только через sitemap.json.",
+        "orphans_note": ("Сирота = страница из sitemap, на которую не ведёт ни одна ссылка с сайта: "
+                         "поиск находит её хуже, а вес по ней не передаётся.") if exhausted else
+                        ("Обход не успел пройти все ссылки (лимит страниц), поэтому это только кандидаты в сироты: "
+                         "ссылка на них может быть на необойдённых страницах. Увеличь --max-pages для точного ответа."),
         "dead_ends": dead_ends[:100],
         "broken_links": broken[:200],
         "links_to_redirects": anchors["__redirect__"][:100],

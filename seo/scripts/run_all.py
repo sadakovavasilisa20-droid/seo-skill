@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Запускает все автоматические шаги подряд и показывает состояние гейта.
+"""Запускает все автоматические шаги подряд (обход, sitemap, ссылки, техника, on-page, законы) и показывает состояние гейта.
 
     python3 run_all.py https://example.com --out audit/ [--max-pages 200] [--queries wordstat.csv]
 
@@ -30,7 +30,7 @@ def main():
     o = ["--out", a.out]
     if run("crawl.py", a.url, *o, "--max-pages", a.max_pages):
         sys.exit("Обход не удался")
-    for s in ("robots_sitemap.py", "link_graph.py", "onpage.py", "rkn_check.py"):
+    for s in ("robots_sitemap.py", "link_graph.py", "tech_checks.py", "onpage.py", "rkn_check.py"):
         run(s, *o)
     if a.queries:
         run("demand.py", *o, "--queries", a.queries)

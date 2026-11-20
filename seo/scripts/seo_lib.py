@@ -9,7 +9,7 @@ import time
 import urllib.error
 import urllib.request
 from html.parser import HTMLParser
-from urllib.parse import urldefrag, urljoin, urlparse
+from urllib.parse import parse_qsl, urldefrag, urlencode, urljoin, urlparse
 
 UA = "Mozilla/5.0 (compatible; seo-skill/2.0; +https://github.com/sadakovavasilisa20-droid/seo-skill)"
 SKIP_EXT = re.compile(r"\.(jpe?g|png|gif|webp|avif|svg|ico|pdf|zip|rar|docx?|xlsx?|pptx?|mp4|mov|mp3|css|js|xml|json|txt)$", re.I)
@@ -41,7 +41,13 @@ def fetch(url, timeout=20, max_redirects=5):
             cur = urljoin(cur, headers["Location"])
             continue
         charset = headers.get_content_charset() if hasattr(headers, "get_content_charset") else None
-        body = raw.decode(charset or "utf-8", errors="replace")
+        if not charset:  # старые русские сайты: кодировка только в <meta charset> (часто windows-1251)
+            m = re.search(rb'<meta[^>]+charset=["\']?([\w-]+)', raw[:4096], re.I)
+            charset = m.group(1).decode("ascii", "ignore") if m else "utf-8"
+        try:
+            body = raw.decode(charset, errors="replace")
+        except LookupError:
+            body = raw.decode("utf-8", errors="replace")
         return {"status": code, "final_url": cur, "redirects": chain,
                 "headers": {k.lower(): v for k, v in headers.items()}, "body": body,
                 "seconds": round(time.time() - t0, 2)}
@@ -49,8 +55,11 @@ def fetch(url, timeout=20, max_redirects=5):
             "headers": {}, "body": "", "seconds": round(time.time() - t0, 2)}
 
 
+TRACKING = re.compile(r"^(utm_\w+|yclid|gclid|fbclid|ysclid|_openstat|from|ref|roistat\w*|etext|_ga)$", re.I)
+
+
 def norm_url(href, base):
-    """Абсолютный URL без якоря и с нормализованным хвостом."""
+    """Абсолютный URL без якоря, без меток рекламы и аналитики, с отсортированными параметрами."""
     if not href:
         return None
     href = href.strip()
@@ -61,7 +70,8 @@ def norm_url(href, base):
     if p.scheme not in ("http", "https"):
         return None
     path = p.path or "/"
-    return p._replace(path=path, netloc=p.netloc.lower()).geturl()
+    query = urlencode(sorted((k, v) for k, v in parse_qsl(p.query, keep_blank_values=True) if not TRACKING.match(k)))
+    return p._replace(path=path, netloc=p.netloc.lower(), query=query).geturl()
 
 
 def same_site(a, b):
@@ -80,6 +90,7 @@ class PageParser(HTMLParser):
         self.jsonld, self._in_jsonld, self._jsonld_buf = [], False, []
         self.forms, self._form = [], None
         self._skip, self.text_parts = 0, []
+        self.resources = []
 
     def handle_starttag(self, tag, attrs):
         a = {k.lower(): (v or "") for k, v in attrs}
@@ -102,6 +113,10 @@ class PageParser(HTMLParser):
             self._a_href, self._a_text = a.get("href"), []
         elif tag == "iframe":
             self.iframes.append(a.get("src", ""))
+        if tag in ("img", "script", "iframe", "source", "video", "audio") and a.get("src"):
+            self.resources.append(a["src"])
+        elif tag == "link" and a.get("href") and a.get("rel", "").lower() in ("stylesheet", "preload", "icon"):
+            self.resources.append(a["href"])
         elif tag == "form":
             self._form = {"action": a.get("action", ""), "fields": [], "checkbox": False}
         elif tag in ("input", "textarea", "select") and self._form is not None:
@@ -206,11 +221,45 @@ def analyze_html(html, url):
         "scripts": p.scripts,
         "iframes": p.iframes,
         "forms": p.forms,
+        "insecure_resources": sorted({x for x in p.resources if x.startswith("http://")})[:20]
+        if url.startswith("https://") else [],
+        "image_urls": [urljoin(url, i["src"]) for i in p.images if i["src"] and not i["src"].startswith("data:")][:60],
+        "all_anchors": " ".join(t.lower() for _, t in p.links)[:5000],
         # счётчики и пиксели ищем по всему HTML, включая встроенные скрипты
         "trackers": sorted(set(re.findall(
             r"(mc\.yandex\.ru|google-analytics\.com|googletagmanager\.com|connect\.facebook\.net|"
             r"top-fwz1\.mail\.ru|vk\.com/rtrg|static\.hotjar\.com)", html))),
     }
+
+
+def read_sitemap(url, seen=None, limit=20):
+    """Читает sitemap и sitemap index (рекурсивно, до limit файлов). Возвращает список URL."""
+    import xml.etree.ElementTree as ET
+    seen = set() if seen is None else seen
+    if url in seen or len(seen) >= limit:
+        return []
+    seen.add(url)
+    r = fetch(url)
+    if r["status"] != 200:
+        return []
+    try:
+        root = ET.fromstring(r["body"].encode("utf-8"))
+    except ET.ParseError:
+        return []
+    m = re.match(r"\{.*\}", root.tag)
+    ns = m.group(0) if m else ""
+    if root.tag.endswith("sitemapindex"):
+        urls = []
+        for loc in root.iter(ns + "loc"):
+            urls += read_sitemap(loc.text.strip(), seen, limit)
+        return urls
+    return [loc.text.strip() for loc in root.iter(ns + "loc") if loc.text]
+
+
+def sitemaps_from_robots(root):
+    r = fetch(root + "/robots.txt")
+    txt = r["body"] if r["status"] == 200 else ""
+    return r, txt, re.findall(r"(?im)^\s*sitemap:\s*(\S+)", txt) or [root + "/sitemap.xml"]
 
 
 def load_json(path, default=None):

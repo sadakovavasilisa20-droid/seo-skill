@@ -39,8 +39,12 @@ def main():
         raise SystemExit("Нет crawl.json: сначала запусти crawl.py")
     pages = [p for p in crawl["pages"] if p.get("status") == 200 and "title" in p]
 
-    has_policy_page = any(re.search(r"(политик|конфиденциальн|персональн|privacy|policy)",
-                                    (p["title"] + " " + p["url"]).lower()) for p in pages)
+    policy_re = r"(политик|конфиденциальн|персональн|privacy|policy)"
+    # политика может быть отдельной страницей, PDF-файлом или ссылкой в подвале: ищем везде
+    has_policy_page = any(re.search(policy_re, (p["title"] + " " + p["url"]).lower())
+                          or re.search(policy_re, p.get("all_anchors", ""))
+                          or any(re.search(policy_re, l["url"].lower()) for l in p.get("internal_links", []) + p.get("external_links", []))
+                          for p in pages)
     findings = []
 
     def add(risk, law, what, fix, urls):

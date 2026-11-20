@@ -8,31 +8,8 @@
 import argparse
 import os
 import re
-import xml.etree.ElementTree as ET
 
-from seo_lib import fetch, load_json, mark_step, norm_url, save_json
-
-
-def read_sitemap(url, seen, limit=20):
-    """Читает sitemap и sitemap index (рекурсивно, до limit файлов)."""
-    if url in seen or len(seen) >= limit:
-        return []
-    seen.add(url)
-    r = fetch(url)
-    if r["status"] != 200:
-        return []
-    try:
-        root = ET.fromstring(r["body"].encode("utf-8"))
-    except ET.ParseError:
-        return []
-    ns = re.match(r"\{.*\}", root.tag)
-    ns = ns.group(0) if ns else ""
-    if root.tag.endswith("sitemapindex"):
-        urls = []
-        for loc in root.iter(ns + "loc"):
-            urls += read_sitemap(loc.text.strip(), seen, limit)
-        return urls
-    return [loc.text.strip() for loc in root.iter(ns + "loc") if loc.text]
+from seo_lib import load_json, mark_step, norm_url, read_sitemap, save_json, sitemaps_from_robots
 
 
 def main():
@@ -44,9 +21,7 @@ def main():
         raise SystemExit("Нет crawl.json: сначала запусти crawl.py")
     root = crawl["root"]
 
-    r = fetch(root + "/robots.txt")
-    robots_txt = r["body"] if r["status"] == 200 else ""
-    sitemaps = re.findall(r"(?im)^\s*sitemap:\s*(\S+)", robots_txt) or [root + "/sitemap.xml"]
+    r, robots_txt, sitemaps = sitemaps_from_robots(root)
     disallow = re.findall(r"(?im)^\s*disallow:\s*(\S*)", robots_txt)
     host_directive = re.findall(r"(?im)^\s*host:\s*(\S+)", robots_txt)
 
@@ -78,10 +53,11 @@ def main():
         "sitemaps": sorted(seen),
         "sitemap_found": bool(sm_urls),
         "sitemap_urls": len(sm_set),
-        "in_sitemap_not_found_by_links": sorted(sm_set - set(by_url))[:200],
+        "in_sitemap_not_crawled": sorted(sm_set - set(by_url))[:200],
+        "in_sitemap_only_no_links": sorted(u for u, p in by_url.items() if p.get("found_via") == "sitemap")[:200],
         "indexable_not_in_sitemap": sorted(crawled_ok - sm_set)[:200],
         "bad_urls_in_sitemap": issues_in_sitemap[:200],
-        "note": "Если обход упёрся в лимит страниц, часть URL из sitemap попадёт в «не найдены по ссылкам» ложно."
+        "note": "Обход упёрся в лимит страниц: часть адресов из sitemap не проверена."
                 if crawl.get("limit_reached") else "",
     }
     save_json(os.path.join(a.out, "sitemap.json"), data)

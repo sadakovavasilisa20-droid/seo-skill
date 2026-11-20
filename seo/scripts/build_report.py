@@ -31,18 +31,24 @@ def main():
     L = lambda name: load_json(os.path.join(a.out, name), {})
     brief, crawl, sm, links, onp = L("brief.json"), L("crawl.json"), L("sitemap.json"), L("links.json"), L("onpage.json")
     rkn, dem, tr, chk, state = L("rkn.json"), L("demand.json"), L("traffic.json"), L("checklist.json"), L("state.json")
+    tech = L("tech.json")
     ok_pages = [p for p in crawl["pages"] if p.get("status") == 200]
 
     # единый список задач для приоритизации
     tasks = []
     for i in onp["issues"]:
         tasks.append((i["severity"], f"{i['issue']} — {i['pages_affected']} стр. ({i['share']}%)", i["fix"]))
+    for f in tech.get("findings", []):
+        tasks.append((f["severity"], f"Техника: {f['what']}", f["fix"]))
     for f in rkn["findings"]:
         tasks.append((f["risk"], f"Закон: {f['what']} — {f['pages']} стр.", f["fix"]))
     if links["broken_links"]:
         tasks.append(("critical", f"Битые внутренние ссылки — {len(links['broken_links'])}", "Исправить или убрать ссылки"))
-    if links["orphans"]:
-        tasks.append(("important", f"Страницы-сироты без входящих ссылок — {len(links['orphans'])}", "Добавить ссылки из меню, разделов или статей"))
+    if links["orphans"] and not links.get("orphans_reliable", True):
+        tasks.append(("nice", f"Кандидаты в страницы-сироты (обход не прошёл весь сайт) — {len(links['orphans'])}",
+                      "Перепроверить с большим лимитом обхода и добавить на них ссылки"))
+    elif links["orphans"]:
+        tasks.append(("important", f"Страницы-сироты: есть в sitemap, но на них не ведёт ни одна ссылка — {len(links['orphans'])}", "Добавить ссылки из меню, разделов или статей"))
     if links["deep_pages"]:
         tasks.append(("important", f"Страницы глубже 3 кликов — {len(links['deep_pages'])}", "Поднять важные страницы ближе к главной"))
     if len(ok_pages) == 1:
@@ -90,26 +96,47 @@ def main():
     w("\n## 1. Индексация: robots.txt и sitemap\n")
     w(f"- robots.txt: {'есть' if sm['robots_txt_found'] else '**нет**'}; закрыт ли весь сайт: {'**да**' if sm['robots_blocks_all'] else 'нет'}")
     w(f"- sitemap: {'найден, ' + str(sm['sitemap_urls']) + ' URL' if sm['sitemap_found'] else '**не найден**'}")
-    w(f"- В sitemap, но обход не нашёл по ссылкам: {len(sm['in_sitemap_not_found_by_links'])}")
+    w(f"- Есть в sitemap, но на сайте на них нет ссылок (сироты): {len(sm.get('in_sitemap_only_no_links', []))}")
+    w(f"- Есть в sitemap, но не проверены (лимит обхода): {len(sm.get('in_sitemap_not_crawled', []))}")
     w(f"- Рабочие страницы, которых нет в sitemap: {len(sm['indexable_not_in_sitemap'])}")
     if sm.get("note"):
         w(f"- ⚠️ {sm['note']}")
 
-    w("\n## 2. Структура и ссылки\n")
+    w("\n## 2. Техника\n")
+    if tech:
+        w(f"- Главный адрес сайта: {tech['main_url']}")
+        for m in tech["mirrors"]:
+            how = f"редирект {m['first_redirect']} → {m['ends_at']}" if m["first_redirect"] else ("не открывается" if m["status"] is None else f"открывается сам, код {m['status']}")
+            w(f"  - {m['url']}: {how}")
+        if tech.get("trailing_slash"):
+            t = tech["trailing_slash"]
+            w(f"- Слэш на конце: {t['variant']} → код {t['status']}{', с редиректом' if t['redirects'] else ''}")
+        w(f"- Несуществующая страница отвечает кодом {tech['soft404']['status']} {'✅' if tech['soft404']['status'] == 404 else '⚠️'}")
+        w(f"- Страниц со смешанным контентом: {tech['mixed_content_pages']}")
+        e, im = tech["external_links"], tech["images"]
+        w(f"- Внешние ссылки: всего {e['total']}, проверено {e['checked']}, битых {len(e['broken'])}")
+        w(f"- Картинки: всего {im['total']}, проверено {im['checked']}, тяжелее 300 КБ: {len(im['heavy'])}")
+        for h in im["heavy"][:5]:
+            w(f"  - {h['url']} — {h['kb']} КБ")
+
+    w("\n## 3. Структура и ссылки\n")
     w(f"- Глубина вложенности (клики от главной: страниц): {links['depth_distribution']}")
-    w(f"- Битых внутренних ссылок: {len(links['broken_links'])}; страниц-тупиков: {len(links['dead_ends'])}; сирот: {len(links['orphans'])}")
+    w(f"- Битых внутренних ссылок: {len(links['broken_links'])}; страниц-тупиков: {len(links['dead_ends'])}; "
+      f"{'сирот' if links.get('orphans_reliable', True) else 'кандидатов в сироты'}: {len(links['orphans'])}")
+    if links["orphans"]:
+        w(f"  - {links['orphans_note']}")
     w("- Страницы с наибольшим внутренним весом:")
     for x in links["top_weight"][:5]:
         w(f"  - {x['url']} (вес {x['weight']}, входящих {x['inbound']})")
 
-    w("\n## 3. Страницы: on-page\n")
+    w("\n## 4. Страницы: on-page\n")
     w(f"Проверено страниц: {onp['pages_checked']}\n")
     w("| Приоритет | Проблема | Страниц | Пример |\n|---|---|---|---|")
     for i in onp["issues"][:20]:
         ex = i["examples"][0]["url"] if i["examples"] else ""
         w(f"| {i['icon']} | {i['issue']} | {i['pages_affected']} ({i['share']}%) | {ex} |")
 
-    w("\n## 4. Спрос и трафик\n")
+    w("\n## 5. Спрос и трафик\n")
     if dem.get("status") == "done":
         w(f"Источник: {dem['source']}, {dem['queries']} запросов, {len(dem['clusters'])} кластеров.\n")
         w("| Кластер | Запросов в мес. | Страница | Статус |\n|---|---|---|---|")
@@ -124,7 +151,7 @@ def main():
     else:
         w(f"\nМодель трафика пропущена: {tr.get('reason')}")
 
-    w("\n## 5. Риски по законам РФ\n")
+    w("\n## 6. Риски по законам РФ\n")
     w(f"_{rkn['disclaimer']}_\n")
     for f in rkn["findings"]:
         w(f"- {ICON[f['risk']]} **{f['what']}** ({f['law']}). Что сделать: {f['fix']}. Страниц: {f['pages']}")
@@ -134,12 +161,12 @@ def main():
     for m in rkn["check_manually"]:
         w(f"- {m}")
 
-    w("\n## 6. Ручные проверки\n")
+    w("\n## 7. Ручные проверки\n")
     for k, v in chk.items():
         icon = "⚠️" if v.get("issue") else ("✅" if v["status"] == "done" else "➖")
         w(f"- {icon} {v['what']}: {v['note']}")
 
-    w("\n## 7. План работ\n")
+    w("\n## 8. План работ\n")
     for title, rank in (("Неделя 1: критичное", 0), ("Недели 2–4: важное", 1), ("Дальше: улучшения", 2)):
         items = [t for t in tasks if SEV_RANK[t[0]] == rank]
         if items:

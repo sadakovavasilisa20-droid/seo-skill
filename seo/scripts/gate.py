@@ -17,6 +17,7 @@ STEPS = [
     ("crawl", "Обход сайта", "crawl.json", False),
     ("robots_sitemap", "robots.txt и sitemap", "sitemap.json", False),
     ("link_graph", "Ссылочный граф", "links.json", False),
+    ("tech", "Техника: зеркала, 404, смешанный контент", "tech.json", False),
     ("onpage", "On-page по всему сайту", "onpage.json", False),
     ("rkn", "Риски по законам РФ", "rkn.json", False),
     ("demand", "Спрос", "demand.json", True),       # можно пропустить с причиной
