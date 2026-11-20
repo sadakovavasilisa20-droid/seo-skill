@@ -76,14 +76,15 @@ def main():
         print(f"[{len(pages)}/{a.max_pages}] {r['status']} {url}")
         time.sleep(a.delay)
 
-    data = {"start": start, "root": root, "crawled_at": time.strftime("%Y-%m-%d %H:%M"),
+    run_id = time.strftime("%Y%m%d-%H%M%S") + "-" + os.urandom(3).hex()
+    data = {"run_id": run_id, "start": start, "root": root, "crawled_at": time.strftime("%Y-%m-%d %H:%M"),
             "max_pages": a.max_pages, "limit_reached": bool(queue), "not_crawled_in_queue": len(queue),
             "from_sitemap_only": sum(1 for p in pages if p["found_via"] == "sitemap"),
             "links_exhausted": links_left == 0,
             "blocked_by_robots": blocked, "pages": pages}
     save_json(os.path.join(a.out, "crawl.json"), data)
     note = f"{len(pages)} страниц" + (", упёрлись в лимит" if queue else "")
-    mark_step(a.out, "crawl", "done", note)
+    mark_step(a.out, "crawl", "done", note, run_id=run_id)
     print("Готово:", note)
 
 

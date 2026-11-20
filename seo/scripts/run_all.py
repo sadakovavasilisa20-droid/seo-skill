@@ -30,7 +30,7 @@ def main():
     o = ["--out", a.out]
     if run("crawl.py", a.url, *o, "--max-pages", a.max_pages):
         sys.exit("Обход не удался")
-    for s in ("robots_sitemap.py", "link_graph.py", "tech_checks.py", "onpage.py", "rkn_check.py"):
+    for s in ("robots_sitemap.py", "link_graph.py", "tech_checks.py", "onpage.py", "rkn_check.py", "pagespeed.py", "competitors.py"):
         run(s, *o)
     if a.queries:
         run("demand.py", *o, "--queries", a.queries)

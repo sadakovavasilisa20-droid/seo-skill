@@ -18,16 +18,19 @@ STEPS = [
     ("robots_sitemap", "robots.txt и sitemap", "sitemap.json", False),
     ("link_graph", "Ссылочный граф", "links.json", False),
     ("tech", "Техника: зеркала, 404, смешанный контент", "tech.json", False),
+    ("speed", "Скорость (PageSpeed)", "speed.json", True),
     ("onpage", "On-page по всему сайту", "onpage.json", False),
     ("rkn", "Риски по законам РФ", "rkn.json", False),
     ("demand", "Спрос", "demand.json", True),       # можно пропустить с причиной
     ("traffic", "Модель трафика", "traffic.json", True),
+    ("competitors", "Конкуренты", "competitors.json", True),
     ("manual_checks", "Ручные проверки", "checklist.json", False),
 ]
 
 
 def check(out):
     state = load_json(os.path.join(out, "state.json"), {})
+    run = (load_json(os.path.join(out, "crawl.json"), {}) or {}).get("run_id")
     problems, rows = [], []
     for key, name, artifact, skippable in STEPS:
         st = state.get(key, {})
@@ -40,7 +43,20 @@ def check(out):
             problems.append(f"{name}: этот шаг нельзя пропускать")
         elif status not in ("done", "skipped"):
             problems.append(f"{name}: статус «{status}» {st.get('note', '')}".strip())
+        # все шаги после обхода должны быть сделаны по тому же обходу, что лежит в crawl.json
+        if exists and key not in ("brief", "crawl") and run and st.get("run_id") != run and status in ("done", "skipped"):
+            problems.append(f"{name}: сделан по другому обходу, перезапусти шаг")
+            ok = False
         rows.append((ok, name, status, st.get("note", "")))
+    brief = load_json(os.path.join(out, "brief.json"), {}) or {}
+    if brief.get("competitors") and state.get("competitors", {}).get("status") == "skipped":
+        problems.append("Конкуренты: в брифе они есть, а шаг пропущен. Запусти competitors.py")
+    chk = load_json(os.path.join(out, "checklist.json"), {}) or {}
+    for k, v in chk.items():
+        if v.get("status") in ("done", "na") and len(v.get("note", "").strip()) < 15:
+            problems.append(f"Ручные проверки: у пункта {k} слишком короткая заметка, нужно доказательство")
+        if v.get("status") in ("done", "na") and run and v.get("run_id") != run:
+            problems.append(f"Ручные проверки: пункт {k} закрыт по старому обходу, проверь заново")
     crawl = load_json(os.path.join(out, "crawl.json"), {})
     if crawl and not [p for p in crawl.get("pages", []) if p.get("status") == 200]:
         problems.append("Обход сайта: ни одной страницы с кодом 200")

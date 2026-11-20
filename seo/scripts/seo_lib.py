@@ -275,9 +275,16 @@ def save_json(path, data):
         json.dump(data, f, ensure_ascii=False, indent=2)
 
 
-def mark_step(out_dir, step, status="done", note=""):
+def current_run(out_dir):
+    """run_id текущего обхода: им помечаются все шаги, чтобы гейт видел, что они сделаны по одному обходу."""
+    crawl = load_json(os.path.join(out_dir, "crawl.json"), {}) or {}
+    return crawl.get("run_id")
+
+
+def mark_step(out_dir, step, status="done", note="", run_id=None):
     """Записывает состояние шага в state.json: его проверяет гейт."""
     path = os.path.join(out_dir, "state.json")
     state = load_json(path, {})
-    state[step] = {"status": status, "note": note, "at": time.strftime("%Y-%m-%d %H:%M")}
+    state[step] = {"status": status, "note": note, "at": time.strftime("%Y-%m-%d %H:%M"),
+                   "run_id": run_id if run_id is not None else current_run(out_dir)}
     save_json(path, state)

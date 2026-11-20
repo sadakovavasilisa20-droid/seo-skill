@@ -84,6 +84,26 @@ def main():
                 for u in urls:
                     add(sev, names[field], "Сделать уникальным для каждой страницы", u, value)
 
+    # почти одинаковые страницы: сравниваем тексты по шинглам (по 5 слов)
+    import re as _re
+
+    def shingles(t):
+        w = _re.findall(r"\w+", t.lower())
+        return {" ".join(w[i:i + 5]) for i in range(max(len(w) - 4, 0))}
+
+    sh = [(p["url"], shingles(p.get("text_sample", ""))) for p in pages if p.get("words", 0) >= 50]
+    for i in range(len(sh)):
+        for j in range(i + 1, len(sh)):
+            a_, b_ = sh[i][1], sh[j][1]
+            if a_ and b_:
+                sim = len(a_ & b_) / len(a_ | b_)
+                if sim >= 0.9:
+                    add("important", "Почти одинаковые страницы (90%+ совпадения текста)",
+                        "Сделать тексты уникальными или склеить страницы через canonical/301", sh[i][0], f"{round(sim * 100)}% с {sh[j][0]}")
+    for p in pages:
+        if "ошибка JSON-LD" in p.get("schema", []):
+            add("important", "Микроразметка JSON-LD с ошибкой", "Исправить JSON-LD: поисковик её не прочитает", p["url"])
+
     errors = [p for p in crawl["pages"] if p.get("status") != 200]
     for p in errors:
         add("critical", "Страница отдаёт ошибку", "Починить или убрать ссылки на неё", p["url"], str(p.get("status") or p.get("error")))

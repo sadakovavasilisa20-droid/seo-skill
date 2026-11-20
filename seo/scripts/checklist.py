@@ -13,7 +13,7 @@
 import argparse
 import os
 
-from seo_lib import load_json, mark_step, save_json
+from seo_lib import current_run, load_json, mark_step, save_json
 
 ITEMS = {
     "speed": "Скорость: PageSpeed Insights, мобильная и десктоп версии (https://pagespeed.web.dev/)",
@@ -45,12 +45,16 @@ def main():
     if a.cmd == "init":
         for k, v in ITEMS.items():
             data.setdefault(k, {"what": v, "status": "todo", "note": ""})
+        speed = load_json(os.path.join(a.out, "speed.json"), {}) or {}
+        if speed.get("status") == "done" and data["speed"]["status"] == "todo":
+            data["speed"].update(status="done", note="Автоматически из PageSpeed: " + speed.get("summary", ""),
+                                 run_id=current_run(a.out))
     elif a.cmd == "set":
         if a.key not in data:
             raise SystemExit(f"Нет пункта {a.key}. Есть: {', '.join(data)}")
         if a.status in ("done", "na") and not a.note.strip():
             raise SystemExit("Нужна заметка: что увидел(а) или почему нельзя проверить")
-        data[a.key].update(status=a.status, note=a.note)
+        data[a.key].update(status=a.status, note=a.note, run_id=current_run(a.out))
         if a.issue:
             if a.issue[0] not in ("critical", "important", "nice"):
                 raise SystemExit("SEVERITY: critical, important или nice")

@@ -17,27 +17,24 @@ ICON = {"critical": "🔴", "important": "🟠", "nice": "🟡", "высокий
 SEV_RANK = {"critical": 0, "высокий": 0, "important": 1, "средний": 1, "nice": 2, "низкий": 2}
 
 
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--out", default="audit")
-    a = ap.parse_args()
-    rows, problems = check(a.out)
-    if problems:
-        print("ГЕЙТ ЗАКРЫТ, отчёт не собран:")
-        for p in problems:
-            print(" -", p)
-        sys.exit(1)
-
+def collect(out):
+    """Собирает данные всех шагов и единый список задач. Используют отчёт и дека."""
+    a = type('A', (), {'out': out})
     L = lambda name: load_json(os.path.join(a.out, name), {})
     brief, crawl, sm, links, onp = L("brief.json"), L("crawl.json"), L("sitemap.json"), L("links.json"), L("onpage.json")
     rkn, dem, tr, chk, state = L("rkn.json"), L("demand.json"), L("traffic.json"), L("checklist.json"), L("state.json")
     tech = L("tech.json")
+    speed, comp = L("speed.json"), L("competitors.json")
     ok_pages = [p for p in crawl["pages"] if p.get("status") == 200]
 
     # единый список задач для приоритизации
     tasks = []
     for i in onp["issues"]:
         tasks.append((i["severity"], f"{i['issue']} — {i['pages_affected']} стр. ({i['share']}%)", i["fix"]))
+    for i in speed.get("issues", []):
+        tasks.append((i["severity"], f"Скорость: {i['what']}", "Сжать картинки, отложить скрипты, проверить LCP-элемент"))
+    for g in comp.get("gaps", []):
+        tasks.append(("important", f"Конкуренты: {g}", "Закрыть разрыв в плане работ"))
     for f in tech.get("findings", []):
         tasks.append((f["severity"], f"Техника: {f['what']}", f["fix"]))
     for f in rkn["findings"]:
@@ -70,6 +67,24 @@ def main():
         for c in unc:
             tasks.append(("important", f"Нет страницы под спрос «{c['main_query']}» ({c['total_freq']} в мес.)", "Создать посадочную страницу"))
     tasks.sort(key=lambda t: SEV_RANK[t[0]])
+    return dict(brief=brief, crawl=crawl, sm=sm, links=links, onp=onp, rkn=rkn, dem=dem, tr=tr, chk=chk, state=state,
+                tech=tech, speed=speed, comp=comp, ok_pages=ok_pages, tasks=tasks)
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--out", default="audit")
+    a = ap.parse_args()
+    rows, problems = check(a.out)
+    if problems:
+        print("ГЕЙТ ЗАКРЫТ, отчёт не собран:")
+        for p in problems:
+            print(" -", p)
+        sys.exit(1)
+
+    D = collect(a.out)
+    brief, crawl, sm, links, onp, rkn, dem, tr, chk, state = (D[k] for k in ('brief','crawl','sm','links','onp','rkn','dem','tr','chk','state'))
+    tech, speed, comp, ok_pages, tasks = D['tech'], D['speed'], D['comp'], D['ok_pages'], D['tasks']
 
     o = []
     w = o.append
@@ -118,6 +133,25 @@ def main():
         w(f"- Картинки: всего {im['total']}, проверено {im['checked']}, тяжелее 300 КБ: {len(im['heavy'])}")
         for h in im["heavy"][:5]:
             w(f"  - {h['url']} — {h['kb']} КБ")
+
+    if speed.get("status") == "done":
+        w("\n**Скорость (PageSpeed Insights):**")
+        for r in speed["results"]:
+            if "mobile" in r:
+                m, dsk = r["mobile"], r.get("desktop", {})
+                w(f"- {r['url']}: мобильная {m['score']}/100 (LCP {m['lcp']}, CLS {m['cls']}), десктоп {dsk.get('score', '—')}/100")
+    elif speed:
+        w(f"\nСкорость: шаг пропущен ({speed.get('reason', '')})")
+    if comp.get("status") == "done":
+        w("\n**Конкуренты (витрины, не позиции):**\n")
+        w("| Сайт | Страниц в sitemap | Слов на главной | Микроразметка |\n|---|---|---|---|")
+        o = comp["ours"]
+        w(f"| **наш** {o['url']} | {o.get('sitemap_urls', '—')} | {o.get('words', '—')} | {', '.join(o.get('schema', [])) or 'нет'} |")
+        for c in comp["competitors"]:
+            if "error" in c:
+                w(f"| {c['url']} | не открылся: {c['error']} | | |")
+            else:
+                w(f"| {c['url']} | {c['sitemap_urls']} | {c['words']} | {', '.join(c['schema']) or 'нет'} |")
 
     w("\n## 3. Структура и ссылки\n")
     w(f"- Глубина вложенности (клики от главной: страниц): {links['depth_distribution']}")
